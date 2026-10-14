@@ -47,7 +47,9 @@
    - Spotify: vytvořit aplikaci na developer.spotify.com, redirect `http://127.0.0.1:8888/callback`, scope `user-library-read`.
    - YT Music: `sp2yt ytm-setup` načte hlavičky požadavku z prohlížeče ze schránky → `browser.json`.
    - Příkaz `auth-check` ověří obě strany.
-3. **Export ze Spotify**: `export` stáhne všechny oblíbené (název, umělci, album, délka, ISRC, datum přidání) do DB.
+3. ✅ **Export ze Spotify**: `export` načte všechny oblíbené (název, umělci, album, délka, ISRC, datum přidání) do DB.
+   Spotify Web API od února 2026 vyžaduje Premium u majitele vývojářské aplikace, proto jsou zdroje tři:
+   CSV z Exportify (`--file liked.csv`), `YourLibrary.json` z exportu osobních údajů (`--file`), nebo API.
 4. **Párování**: `match` najde `videoId` pro každou skladbu, uloží skóre, vygeneruje `review.csv`.
 5. **Kontrola**: `review` zobrazí nejisté shody, ruční opravy z CSV se načtou zpět (`apply-review`).
 6. **Import**: `import --target liked|playlist [--dry-run]` zapíše do YT Music s kontrolou existujících položek.

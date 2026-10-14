@@ -8,7 +8,7 @@ from rich.table import Table
 from spotipy import SpotifyException, SpotifyOauthError
 from ytmusicapi.exceptions import YTMusicError
 
-from sp2yt import clients, db
+from sp2yt import clients, db, sources
 from sp2yt.config import Config, load_config
 
 app = typer.Typer(
@@ -53,6 +53,9 @@ def auth_check() -> None:
 
 
 def _check_spotify(cfg: Config) -> bool:
+    if not cfg.spotify_client_id:
+        console.print("[yellow]– Spotify:[/yellow] API není nastavené, stačí export ze souboru (`export --file`).")
+        return True
     try:
         sp = clients.spotify(cfg)
         user = sp.current_user()
@@ -86,9 +89,26 @@ def _check_ytmusic(cfg: Config) -> bool:
 
 
 @app.command()
-def export() -> None:
-    """Stáhne oblíbené skladby ze Spotify do lokální databáze."""
-    _not_yet(3)
+def export(
+    file: Annotated[
+        Path | None,
+        typer.Option(
+            "--file",
+            "-f",
+            help="CSV z Exportify nebo YourLibrary.json z exportu dat. Bez něj se čte ze Spotify API (vyžaduje Premium).",
+        ),
+    ] = None,
+) -> None:
+    """Načte oblíbené skladby ze Spotify do lokální databáze. Lze opakovat, nic se nezdvojí."""
+    cfg = load_config()
+    try:
+        tracks = sources.from_file(file) if file else sources.from_api(clients.spotify(cfg))
+        with closing(db.connect(cfg.db_path)) as conn, console.status("Načítám skladby…"):
+            new, total = db.upsert_tracks(conn, tracks)
+    except (sources.SourceError, clients.AuthError, SpotifyException, SpotifyOauthError) as e:
+        console.print(f"[red]Export selhal:[/red] {e}")
+        raise typer.Exit(1)
+    console.print(f"[green]Načtené skladby: {total}[/green], z toho nové v databázi: [bold]{new}[/bold].")
 
 
 @app.command()

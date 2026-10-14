@@ -10,9 +10,41 @@ Podrobnosti v [PLAN.md](PLAN.md).
 uv sync
 ```
 
-## Přihlášení
+## 1. Oblíbené skladby ze Spotify
 
-### Spotify
+Vyber jeden ze zdrojů. Export lze kdykoli opakovat, i z jiného zdroje: nic se nezdvojí, jen se doplní nové skladby.
+
+### A) Exportify (doporučeno, bez Spotify Premium)
+
+1. Otevři https://exportify.net, přihlas se Spotify účtem a u **Liked Songs** klikni na *Export*.
+2. Stažené CSV načti:
+
+```bash
+uv run sp2yt export --file ~/Downloads/liked_songs.csv
+```
+
+### B) Export osobních údajů
+
+Na https://www.spotify.com/account/privacy zaškrtni *Account data* a pošli žádost. Spotify pošle ZIP e-mailem
+(může to trvat až 30 dní). Z něj použij `YourLibrary.json`:
+
+```bash
+uv run sp2yt export --file ~/Downloads/my_spotify_data/YourLibrary.json
+```
+
+Tento soubor neobsahuje délku skladby ani datum přidání, takže párování je o něco méně přesné.
+
+### C) Spotify Web API (jen se Spotify Premium)
+
+Od února 2026 smí vývojářskou aplikaci vlastnit jen účet s Premium. Pak nastav přihlášení podle sekce níže a spusť:
+
+```bash
+uv run sp2yt export
+```
+
+## 2. Přihlášení
+
+### Spotify (jen pro variantu C)
 
 1. Na https://developer.spotify.com/dashboard vytvoř aplikaci (Create app):
    - Redirect URI: `http://127.0.0.1:8888/callback` (přesně takhle, `localhost` Spotify nepovoluje)
