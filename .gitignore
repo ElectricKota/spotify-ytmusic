@@ -1,0 +1,16 @@
+# Přihlašovací údaje a tokeny — nikdy necommitovat
+.env
+browser.json
+oauth.json
+.cache
+.spotify_cache
+
+# Lokální stav a výstupy
+state.db
+state.db-*
+*.csv
+
+# Python
+.venv/
+__pycache__/
+*.pyc
