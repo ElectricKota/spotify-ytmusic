@@ -43,9 +43,9 @@
 ## Kroky implementace
 
 1. ✅ **Kostra projektu**: `uv` projekt, závislosti, `.env.example`, `.gitignore` (tokeny a hlavičky nikdy do gitu).
-2. **Přihlášení**:
+2. ✅ **Přihlášení** (návod v README.md):
    - Spotify: vytvořit aplikaci na developer.spotify.com, redirect `http://127.0.0.1:8888/callback`, scope `user-library-read`.
-   - YT Music: `ytmusicapi browser` (vložíš hlavičky požadavku z prohlížeče) → `browser.json`.
+   - YT Music: `sp2yt ytm-setup` načte hlavičky požadavku z prohlížeče ze schránky → `browser.json`.
    - Příkaz `auth-check` ověří obě strany.
 3. **Export ze Spotify**: `export` stáhne všechny oblíbené (název, umělci, album, délka, ISRC, datum přidání) do DB.
 4. **Párování**: `match` najde `videoId` pro každou skladbu, uloží skóre, vygeneruje `review.csv`.

@@ -1,11 +1,15 @@
 from contextlib import closing
+from pathlib import Path
+from typing import Annotated
 
 import typer
 from rich.console import Console
 from rich.table import Table
+from spotipy import SpotifyException, SpotifyOauthError
+from ytmusicapi.exceptions import YTMusicError
 
-from sp2yt import db
-from sp2yt.config import load_config
+from sp2yt import clients, db
+from sp2yt.config import Config, load_config
 
 app = typer.Typer(
     help="Přesun oblíbených skladeb ze Spotify do YouTube Music bez duplicit.",
@@ -19,10 +23,66 @@ def _not_yet(step: int) -> None:
     raise typer.Exit(1)
 
 
+@app.command("ytm-setup")
+def ytm_setup(
+    file: Annotated[
+        Path | None,
+        typer.Option(help="Soubor s hlavičkami; bez něj se načtou ze schránky."),
+    ] = None,
+) -> None:
+    """Uloží přihlášení k YouTube Music z hlaviček požadavku zkopírovaných z prohlížeče."""
+    cfg = load_config()
+    headers_raw = file.read_text() if file else clients.read_clipboard()
+    try:
+        clients.save_ytm_headers(cfg, headers_raw)
+    except YTMusicError as e:
+        console.print(f"[red]Hlavičky se nepodařilo načíst:[/red] {e}")
+        raise typer.Exit(1)
+    console.print(f"[green]Uloženo do {cfg.ytm_auth_file}.[/green] Ověřuji přihlášení…")
+    _check_ytmusic(cfg)
+
+
 @app.command("auth-check")
 def auth_check() -> None:
     """Ověří přihlášení ke Spotify i YouTube Music."""
-    _not_yet(2)
+    cfg = load_config()
+    ok = _check_spotify(cfg)
+    ok = _check_ytmusic(cfg) and ok
+    if not ok:
+        raise typer.Exit(1)
+
+
+def _check_spotify(cfg: Config) -> bool:
+    try:
+        sp = clients.spotify(cfg)
+        user = sp.current_user()
+        total = sp.current_user_saved_tracks(limit=1)["total"]
+    except (clients.AuthError, SpotifyException, SpotifyOauthError) as e:
+        console.print(f"[red]✗ Spotify:[/red] {e}")
+        return False
+    console.print(
+        f"[green]✓ Spotify:[/green] {user.get('display_name') or user['id']}, "
+        f"oblíbených skladeb: [bold]{total}[/bold]"
+    )
+    return True
+
+
+def _check_ytmusic(cfg: Config) -> bool:
+    try:
+        info = clients.ytmusic(cfg).get_account_info()
+    except clients.AuthError as e:
+        console.print(f"[red]✗ YouTube Music:[/red] {e}")
+        return False
+    except Exception as e:  # ytmusicapi hází různé výjimky při prošlých cookies
+        console.print(
+            f"[red]✗ YouTube Music:[/red] přihlášení nefunguje ({e}). "
+            "Zkopíruj hlavičky znovu a spusť `uv run sp2yt ytm-setup`."
+        )
+        return False
+    console.print(
+        f"[green]✓ YouTube Music:[/green] {info.get('accountName')} {info.get('channelHandle') or ''}"
+    )
+    return True
 
 
 @app.command()

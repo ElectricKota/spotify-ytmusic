@@ -1,6 +1,7 @@
 # Přihlašovací údaje a tokeny — nikdy necommitovat
 .env
 browser.json
+headers*.txt
 oauth.json
 .cache
 .spotify_cache
