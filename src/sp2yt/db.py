@@ -173,6 +173,15 @@ def save_import_error(conn: sqlite3.Connection, spotify_id: str, error: str) -> 
         )
 
 
+def replace_video(conn: sqlite3.Connection, old_video_id: str, new_video_id: str) -> None:
+    """Po výměně klipu za audio verzi ať DB ukazuje na to, co je opravdu lajknuté."""
+    with conn:
+        conn.execute(
+            "UPDATE tracks SET video_id = ?, match_method = 'audio-fix', updated_at = datetime('now') WHERE video_id = ?",
+            (new_video_id, old_video_id),
+        )
+
+
 def mark_duplicates(conn: sqlite3.Connection) -> int:
     """Když více skladeb ze Spotify vede na stejné video, ponechá jen jednu.
 

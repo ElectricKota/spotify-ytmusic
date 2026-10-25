@@ -1,3 +1,5 @@
+import json
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import closing
@@ -13,7 +15,7 @@ from spotipy import SpotifyException, SpotifyOauthError
 from ytmusicapi import LikeStatus
 from ytmusicapi.exceptions import YTMusicError
 
-from sp2yt import clients, db, sources
+from sp2yt import clients, db, sources, videos
 from sp2yt.config import Config, load_config
 from sp2yt.matcher import ACCEPT, REVIEW, Matcher, clean_title, normalize
 
@@ -239,6 +241,11 @@ def review() -> None:
 MAX_CONSECUTIVE_ERRORS = 3
 
 
+def _is_rate_limited(e: Exception) -> bool:
+    # Google místo JSON vrátí HTML stránku „Sorry…“ (403) → ytmusicapi selže na parsování JSON
+    return isinstance(e, json.JSONDecodeError) or "403" in str(e) or "Expecting value" in str(e)
+
+
 def _song_key(title: str, artists: list[str]) -> tuple[str, str]:
     return clean_title(title), normalize(artists[0]) if artists else ""
 
@@ -247,7 +254,7 @@ def _song_key(title: str, artists: list[str]) -> tuple[str, str]:
 def import_(
     limit: Annotated[int | None, typer.Option(help="Lajknout jen N nejstarších skladeb (na zkoušku).")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Jen vypsat, co by se lajklo, nic neměnit.")] = False,
-    delay: Annotated[float, typer.Option(min=0, help="Pauza mezi lajky v sekundách.")] = 0.3,
+    delay: Annotated[float, typer.Option(min=0, help="Pauza mezi lajky v sekundách.")] = 2.0,
 ) -> None:
     """Označí nalezené skladby v YouTube Music jako „To se mi líbí“, od nejstarší po nejnovější.
 
@@ -317,6 +324,14 @@ def import_(
                             failed += 1
                             consecutive_errors += 1
                             db.save_import_error(conn, t["spotify_id"], str(e)[:500])
+                            if _is_rate_limited(e):
+                                progress.stop()
+                                console.print(
+                                    "[red]YouTube dočasně zablokoval lajkování[/red] (ochrana proti automatickému "
+                                    "provozu, HTTP 403). Nezkoušej to hned znovu, počkej několik hodin; "
+                                    "import pak naváže. Pomalejší tempo: `--delay 5`."
+                                )
+                                break
                             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                                 progress.stop()
                                 console.print(
@@ -341,6 +356,79 @@ def import_(
         f"Lajknuto: [green]{added}[/green], už bylo lajknuté: {skipped}"
         + (f", chyby: [red]{failed}[/red]" if failed else "")
         + f". Zbývá importovat: [bold]{remaining}[/bold]."
+    )
+
+
+@app.command("fix-videos")
+def fix_videos(
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Jen vypsat, co by se vyměnilo.")] = False,
+    workers: Annotated[int, typer.Option(min=1, max=8, help="Počet paralelních vyhledávání.")] = 4,
+) -> None:
+    """Vymění v Liked music videoklipy za audio verze skladeb (lepší pro offline a auto).
+
+    Nejdřív lajkne audio verzi, teprve pak odlajkne klip. Klipy bez jisté audio verze nechá.
+    """
+    cfg = load_config()
+    try:
+        yt = clients.ytmusic(cfg)
+    except clients.AuthError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+    account = yt.get_account_info()
+    console.print(f"Kanál: [bold]{account.get('accountName')} {account.get('channelHandle') or ''}[/bold]")
+
+    with console.status("Načítám Liked music…"):
+        liked = yt.get_liked_songs(limit=None).get("tracks", [])
+    liked_ids = {t["videoId"] for t in liked if t.get("videoId")}
+    clips = [t for t in liked if t.get("videoId") and t.get("videoType") != videos.AUDIO]
+    if not clips:
+        console.print("V Liked music nejsou žádné videoklipy.")
+        return
+
+    local = threading.local()
+
+    def find(track: dict) -> videos.Replacement:
+        if not hasattr(local, "yt"):
+            local.yt = clients.ytmusic(cfg)
+        return videos.find_audio(local.yt, track)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool, console.status(f"Hledám audio verze pro {len(clips)} klipů…"):
+        results = list(pool.map(find, clips))
+    found = [r for r in results if r.audio_id]
+
+    table = Table(title=f"Audio verze nalezena u {len(found)} z {len(clips)} klipů")
+    for col in ("Klip", "→ Skladba", "Shoda"):
+        table.add_column(col)
+    for r in found:
+        table.add_row(
+            f"{', '.join(r.artists)} – {r.video_title}",
+            f"{', '.join(r.audio_artists)} – {r.audio_title}",
+            f"{r.score:.2f}",
+        )
+    console.print(table)
+    if dry_run or not found:
+        return
+
+    replaced = 0
+    with closing(db.connect(cfg.db_path)) as conn:
+        for r in found:
+            try:
+                if r.audio_id not in liked_ids:
+                    yt.rate_song(r.audio_id, LikeStatus.LIKE)
+                    liked_ids.add(r.audio_id)
+                yt.rate_song(r.video_id, LikeStatus.INDIFFERENT)
+            except Exception as e:
+                if _is_rate_limited(e):
+                    console.print("[red]YouTube dočasně zablokoval lajkování (HTTP 403), zkus to za několik hodin.[/red]")
+                    break
+                console.print(f"[red]Chyba u {r.video_title}:[/red] {str(e)[:200]}")
+                continue
+            db.replace_video(conn, r.video_id, r.audio_id)
+            replaced += 1
+            time.sleep(2)
+    console.print(
+        f"[green]Vyměněno {replaced} klipů za audio.[/green] Zbylých {len(clips) - replaced} klipů audio verzi nemá "
+        "(živáky, covery, mixy) a zůstávají."
     )
 
 
