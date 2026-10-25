@@ -47,9 +47,19 @@ def ytmusic(cfg: Config) -> YTMusic:
     return YTMusic(str(cfg.ytm_auth_file))
 
 
-def save_ytm_headers(cfg: Config, headers_raw: str) -> None:
-    """Uloží hlavičky z prohlížeče do auth souboru, čitelného jen pro vlastníka."""
-    setup_browser(str(cfg.ytm_auth_file), headers_raw)
+def save_ytm_headers(cfg: Config, raw: str, authuser: int = 0) -> None:
+    """Uloží přihlášení z prohlížeče do auth souboru, čitelného jen pro vlastníka.
+
+    `raw` jsou buď celé hlavičky požadavku, nebo jen hodnota hlavičky Cookie.
+    Authorization si ytmusicapi dopočítá z cookie SAPISID samo.
+    """
+    raw = raw.strip()
+    if "\n" not in raw and "SAPISID" in raw:
+        raw = raw.removeprefix("Cookie:").removeprefix("cookie:").strip()
+        # ytmusicapi podle „SAPISIDHASH“ v authorization pozná přihlášení z prohlížeče;
+        # skutečnou hodnotu dopočítá z cookie při každém požadavku
+        raw = f"cookie: {raw}\nx-goog-authuser: {authuser}\nauthorization: SAPISIDHASH 0_0"
+    setup_browser(str(cfg.ytm_auth_file), raw)
     os.chmod(cfg.ytm_auth_file, 0o600)
 
 

@@ -54,16 +54,20 @@ uv run sp2yt export
 
 ### YouTube Music
 
-1. V prohlížeči otevři https://music.youtube.com přihlášený a otevři DevTools (⌥⌘I) → záložka **Network**.
+Stačí hodnota hlavičky **Cookie** z přihlášeného YT Music (Authorization si skript dopočítá sám):
+
+1. Otevři https://music.youtube.com přihlášený a otevři DevTools (⌥⌘I) → záložka **Network**.
 2. Do filtru napiš `browse` a klikni v YT Music třeba na Knihovnu, aby se objevil požadavek `browse?…` (metoda POST).
-3. Klikni na něj → **Headers** → **Request Headers**:
-   - Chrome: pravým tlačítkem na požadavek → *Copy* → *Copy request headers*
-   - Firefox: přepni na *Raw* a zkopíruj celý text
-4. Spusť (hlavičky se načtou ze schránky a uloží do `browser.json`):
+3. Klikni na něj → **Headers** → **Request Headers** → najdi řádek **Cookie** a zkopíruj celou jeho hodnotu
+   (je dlouhá, musí obsahovat `SAPISID`). Do chatu ani nikam jinam ji nevkládej, je to přístup k tvému Google účtu.
+4. Spusť (cookie se načte ze schránky a uloží do `browser.json`):
 
 ```bash
 uv run sp2yt ytm-setup
 ```
+
+Pokud máš v prohlížeči přihlášeno víc Google účtů a YT Music běží na jiném než prvním,
+přidej `--authuser 1` (hodnota hlavičky `X-Goog-AuthUser`).
 
 Přihlášení platí, dokud se z YT Music v tom prohlížeči neodhlásíš.
 

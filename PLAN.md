@@ -45,7 +45,7 @@
 1. ✅ **Kostra projektu**: `uv` projekt, závislosti, `.env.example`, `.gitignore` (tokeny a hlavičky nikdy do gitu).
 2. ✅ **Přihlášení** (návod v README.md):
    - Spotify: vytvořit aplikaci na developer.spotify.com, redirect `http://127.0.0.1:8888/callback`, scope `user-library-read`.
-   - YT Music: `sp2yt ytm-setup` načte hlavičky požadavku z prohlížeče ze schránky → `browser.json`.
+   - YT Music: `sp2yt ytm-setup` načte ze schránky hodnotu Cookie z prohlížeče → `browser.json`.
    - Příkaz `auth-check` ověří obě strany.
 3. ✅ **Export ze Spotify**: `export` načte všechny oblíbené (název, umělci, album, délka, ISRC, datum přidání) do DB.
    Spotify Web API od února 2026 vyžaduje Premium u majitele vývojářské aplikace, proto jsou zdroje tři:

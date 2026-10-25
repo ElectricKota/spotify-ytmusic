@@ -27,19 +27,24 @@ def _not_yet(step: int) -> None:
 def ytm_setup(
     file: Annotated[
         Path | None,
-        typer.Option(help="Soubor s hlavičkami; bez něj se načtou ze schránky."),
+        typer.Option(help="Soubor s hlavičkami nebo cookie; bez něj se načtou ze schránky."),
     ] = None,
+    authuser: Annotated[
+        int,
+        typer.Option(help="Pořadí Google účtu v prohlížeči (X-Goog-AuthUser), když se ukládá jen cookie."),
+    ] = 0,
 ) -> None:
-    """Uloží přihlášení k YouTube Music z hlaviček požadavku zkopírovaných z prohlížeče."""
+    """Uloží přihlášení k YouTube Music z hodnoty Cookie (nebo celých hlaviček) zkopírované z prohlížeče."""
     cfg = load_config()
-    headers_raw = file.read_text() if file else clients.read_clipboard()
+    raw = file.read_text() if file else clients.read_clipboard()
     try:
-        clients.save_ytm_headers(cfg, headers_raw)
+        clients.save_ytm_headers(cfg, raw, authuser)
     except YTMusicError as e:
         console.print(f"[red]Hlavičky se nepodařilo načíst:[/red] {e}")
         raise typer.Exit(1)
     console.print(f"[green]Uloženo do {cfg.ytm_auth_file}.[/green] Ověřuji přihlášení…")
-    _check_ytmusic(cfg)
+    if not _check_ytmusic(cfg):
+        raise typer.Exit(1)
 
 
 @app.command("auth-check")
@@ -77,9 +82,11 @@ def _check_ytmusic(cfg: Config) -> bool:
         console.print(f"[red]✗ YouTube Music:[/red] {e}")
         return False
     except Exception as e:  # ytmusicapi hází různé výjimky při prošlých cookies
+        # Nepřihlášený uživatel dostane menu bez hlavičky účtu → ytmusicapi selže na cestě k 'header'
+        reason = "YouTube tě nepoznal jako přihlášeného" if "'header'" in str(e) else str(e)[:200]
         console.print(
-            f"[red]✗ YouTube Music:[/red] přihlášení nefunguje ({e}). "
-            "Zkopíruj hlavičky znovu a spusť `uv run sp2yt ytm-setup`."
+            f"[red]✗ YouTube Music:[/red] přihlášení nefunguje ({reason}). "
+            "Zkopíruj Cookie znovu z přihlášeného music.youtube.com a spusť `uv run sp2yt ytm-setup`."
         )
         return False
     console.print(
