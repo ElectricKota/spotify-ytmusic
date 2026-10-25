@@ -1,7 +1,10 @@
 """Vytvoření přihlášených klientů pro Spotify a YouTube Music."""
 
+import json
 import os
+import re
 import subprocess
+from dataclasses import dataclass
 
 import spotipy
 from spotipy.cache_handler import CacheFileHandler
@@ -44,7 +47,43 @@ def ytmusic(cfg: Config) -> YTMusic:
             f"Chybí {cfg.ytm_auth_file}. Zkopíruj hlavičky požadavku z prohlížeče "
             "a spusť `uv run sp2yt ytm-setup`."
         )
-    return YTMusic(str(cfg.ytm_auth_file))
+    return YTMusic(str(cfg.ytm_auth_file), user=cfg.ytm_user)
+
+
+@dataclass(frozen=True)
+class Channel:
+    name: str
+    handle: str
+    user_id: str  # hodnota pro YTMusic(user=…) / YTM_USER
+    selected: bool
+
+
+def ytmusic_channels(cfg: Config) -> list[Channel]:
+    """Kanály (osobní i brand účty) dostupné pod přihlášeným Google účtem."""
+    yt = YTMusic(str(cfg.ytm_auth_file))
+    response = yt._send_request("account/accounts_list", {})
+
+    items: list[dict] = []
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            if "accountItem" in node:
+                items.append(node["accountItem"])
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(response)
+    channels = []
+    for item in items:
+        text = lambda key: "".join(r.get("text", "") for r in item.get(key, {}).get("runs", []))  # noqa: E731
+        # ID kanálu je v endpointu pro přepnutí identity
+        ids = re.findall(r'"(?:obfuscatedGaiaId|pageId)":\s*"(\d+)"', json.dumps(item.get("serviceEndpoint", {})))
+        if ids:
+            channels.append(Channel(text("accountName"), text("channelHandle"), ids[0], bool(item.get("isSelected"))))
+    return channels
 
 
 def save_ytm_headers(cfg: Config, raw: str, authuser: int = 0) -> None:

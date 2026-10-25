@@ -53,8 +53,10 @@
 4. ✅ **Párování**: `match` najde `videoId` pro každou skladbu a uloží skóre. Pořadí: ISRC → katalog skladeb → videa.
    Skladby vedoucí na stejné video označí jako `duplicate`. Na 1246 skladbách: 2 min 20 s,
    1150 jistých shod (1117 přes ISRC), 34 ke kontrole, 7 nenalezeno, 55 duplicit (stejná nahrávka na singlu i albu).
-5. **Kontrola**: `review` zobrazí nejisté shody, ruční opravy z CSV se načtou zpět (`apply-review`).
-6. **Import**: `import --target liked|playlist [--dry-run]` zapíše do YT Music s kontrolou existujících položek.
+5. ⏭️ **Kontrola** (zatím přeskočeno): `review` zobrazí nejisté shody, ruční opravy z CSV se načtou zpět (`apply-review`).
+6. ✅ **Import**: `import [--limit N] [--dry-run]` lajkuje od nejstarší po nejnovější (pořadí jako na Spotify).
+   Přeskočí, co už v Liked music je, podle videoId i podle názvu + interpreta (jiná verze téže skladby).
+   Cílový kanál (i brand účet pod stejným Google přihlášením) vybírá `ytm-account @handle`.
 7. **Report**: `status` ukáže přehled (přeneseno, nenalezeno, k revizi) a export nenalezených do CSV.
 
 Každý krok je samostatný příkaz, takže ho po implementaci rovnou otestujeme na tvém účtu

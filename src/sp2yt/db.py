@@ -140,6 +140,39 @@ def save_match(conn: sqlite3.Connection, spotify_id: str, status: str, candidate
     )
 
 
+def tracks_to_import(conn: sqlite3.Connection, limit: int | None) -> list[dict]:
+    """Skladby připravené k lajku, od nejdřív oblíbené (aby Liked music mělo stejné pořadí)."""
+    rows = conn.execute(
+        """
+        SELECT spotify_id, name, artists, added_at, video_id, match_title, match_artists FROM tracks
+        WHERE status = 'matched'
+        ORDER BY added_at IS NULL, added_at, source_pos DESC
+        LIMIT ?
+        """,
+        (-1 if limit is None else limit,),
+    ).fetchall()
+    return [
+        {**dict(r), "artists": json.loads(r["artists"]), "match_artists": json.loads(r["match_artists"] or "[]")}
+        for r in rows
+    ]
+
+
+def mark_added(conn: sqlite3.Connection, spotify_id: str) -> None:
+    with conn:
+        conn.execute(
+            "UPDATE tracks SET status = 'added', error = NULL, updated_at = datetime('now') WHERE spotify_id = ?",
+            (spotify_id,),
+        )
+
+
+def save_import_error(conn: sqlite3.Connection, spotify_id: str, error: str) -> None:
+    with conn:
+        conn.execute(
+            "UPDATE tracks SET error = ?, updated_at = datetime('now') WHERE spotify_id = ?",
+            (error, spotify_id),
+        )
+
+
 def mark_duplicates(conn: sqlite3.Connection) -> int:
     """Když více skladeb ze Spotify vede na stejné video, ponechá jen jednu.
 

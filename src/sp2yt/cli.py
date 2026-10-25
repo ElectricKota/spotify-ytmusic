@@ -1,18 +1,21 @@
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import closing
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from dotenv import set_key, unset_key
 from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
 from rich.table import Table
 from spotipy import SpotifyException, SpotifyOauthError
+from ytmusicapi import LikeStatus
 from ytmusicapi.exceptions import YTMusicError
 
 from sp2yt import clients, db, sources
 from sp2yt.config import Config, load_config
-from sp2yt.matcher import ACCEPT, REVIEW, Matcher
+from sp2yt.matcher import ACCEPT, REVIEW, Matcher, clean_title, normalize
 
 app = typer.Typer(
     help="Přesun oblíbených skladeb ze Spotify do YouTube Music bez duplicit.",
@@ -51,6 +54,39 @@ def ytm_setup(
     console.print(f"[green]Uloženo do {cfg.ytm_auth_file}.[/green] Ověřuji přihlášení…")
     if not _check_ytmusic(cfg):
         raise typer.Exit(1)
+
+
+@app.command("ytm-account")
+def ytm_account(
+    handle: Annotated[str | None, typer.Argument(help="@handle kanálu, do kterého se má importovat.")] = None,
+) -> None:
+    """Vypíše kanály pod přihlášeným Google účtem, nebo vybere ten, do kterého se importuje."""
+    cfg = load_config()
+    try:
+        channels = clients.ytmusic_channels(cfg)
+    except Exception as e:
+        console.print(f"[red]Kanály se nepodařilo načíst:[/red] {str(e)[:200]}")
+        raise typer.Exit(1)
+
+    if handle is None:
+        for c in channels:
+            active = c.user_id == cfg.ytm_user or (cfg.ytm_user is None and c.selected)
+            console.print(f"{'[green]→[/green]' if active else ' '} {c.name} [bold]{c.handle}[/bold]")
+        console.print("Vybereš ho přes `uv run sp2yt ytm-account @handle`.")
+        return
+
+    chosen = next((c for c in channels if c.handle.lower() == handle.lower()), None)
+    if chosen is None:
+        console.print(f"[red]Kanál {handle} nenalezen.[/red] Dostupné: {', '.join(c.handle for c in channels)}")
+        raise typer.Exit(1)
+    env = Path(".env")
+    env.touch()
+    # Výchozí kanál přihlášení nepotřebuje ID; ostatní (brand účty) se volají jeho jménem
+    if chosen.selected:
+        unset_key(env, "YTM_USER")
+    else:
+        set_key(env, "YTM_USER", chosen.user_id, quote_mode="never")
+    console.print(f"[green]Import půjde do kanálu {chosen.name} {chosen.handle}[/green] (uloženo v .env).")
 
 
 @app.command("auth-check")
@@ -200,10 +236,112 @@ def review() -> None:
     _not_yet(5)
 
 
+MAX_CONSECUTIVE_ERRORS = 3
+
+
+def _song_key(title: str, artists: list[str]) -> tuple[str, str]:
+    return clean_title(title), normalize(artists[0]) if artists else ""
+
+
 @app.command("import")
-def import_() -> None:
-    """Označí nalezené skladby v YouTube Music jako „To se mi líbí“."""
-    _not_yet(6)
+def import_(
+    limit: Annotated[int | None, typer.Option(help="Lajknout jen N nejstarších skladeb (na zkoušku).")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Jen vypsat, co by se lajklo, nic neměnit.")] = False,
+    delay: Annotated[float, typer.Option(min=0, help="Pauza mezi lajky v sekundách.")] = 0.3,
+) -> None:
+    """Označí nalezené skladby v YouTube Music jako „To se mi líbí“, od nejstarší po nejnovější.
+
+    YT Music řadí Liked music podle času lajku, proto se lajkuje postupně v pořadí ze Spotify.
+    Skladby, které už v YT Music lajknuté jsou, se jen označí jako hotové.
+    """
+    cfg = load_config()
+    try:
+        yt = clients.ytmusic(cfg)
+    except clients.AuthError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    with closing(db.connect(cfg.db_path)) as conn:
+        todo = db.tracks_to_import(conn, limit)
+        if not todo:
+            console.print("Není co importovat. Spusť nejdřív `match`, nebo je už všechno přidané (`status`).")
+            return
+
+        if dry_run:
+            table = Table(title=f"Lajklo by se {len(todo)} skladeb (prvních 20, od nejstarší)")
+            for col in ("Oblíbeno na Spotify", "Spotify", "YouTube Music"):
+                table.add_column(col)
+            for t in todo[:20]:
+                table.add_row(
+                    (t["added_at"] or "")[:10],
+                    f"{', '.join(t['artists'])} – {t['name']}",
+                    f"{', '.join(t['match_artists'])} – {t['match_title']}",
+                )
+            console.print(table)
+            return
+
+        account = yt.get_account_info()
+        console.print(f"Cílový kanál: [bold]{account.get('accountName')} {account.get('channelHandle') or ''}[/bold] "
+                      "(změníš přes `sp2yt ytm-account`)")
+        with console.status("Načítám, co už máš v YT Music lajknuté…"):
+            liked = yt.get_liked_songs(limit=None).get("tracks", [])
+        already = {t["videoId"] for t in liked if t.get("videoId")}
+        # Stejnou skladbu můžeš mít lajknutou v jiné verzi (klip vs. audio) → porovnat i název a interpreta
+        already_keys = {_song_key(t["title"], [a["name"] for a in t.get("artists") or []]) for t in liked}
+
+        added = skipped = failed = consecutive_errors = 0
+        progress = Progress(
+            TextColumn("[bold]Lajkuji"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeRemainingColumn(),
+            TextColumn("{task.fields[current]}"),
+            console=console,
+        )
+        try:
+            with progress:
+                task = progress.add_task("import", total=len(todo), current="")
+                for t in todo:
+                    progress.update(task, current=f"{t['artists'][0] if t['artists'] else ''} – {t['name']}"[:50])
+                    if (
+                        t["video_id"] in already
+                        or _song_key(t["match_title"], t["match_artists"]) in already_keys
+                        or _song_key(t["name"], t["artists"]) in already_keys
+                    ):
+                        db.mark_added(conn, t["spotify_id"])
+                        skipped += 1
+                    else:
+                        try:
+                            yt.rate_song(t["video_id"], LikeStatus.LIKE)
+                        except Exception as e:
+                            failed += 1
+                            consecutive_errors += 1
+                            db.save_import_error(conn, t["spotify_id"], str(e)[:500])
+                            if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                                progress.stop()
+                                console.print(
+                                    f"[red]{MAX_CONSECUTIVE_ERRORS} chyby za sebou, zastavuji.[/red] Poslední: {str(e)[:200]}\n"
+                                    "Nejspíš vypršelo přihlášení (`uv run sp2yt auth-check`) nebo YT omezuje počet "
+                                    "požadavků; zkus to za chvíli znovu, import naváže."
+                                )
+                                break
+                        else:
+                            consecutive_errors = 0
+                            already.add(t["video_id"])
+                            db.mark_added(conn, t["spotify_id"])
+                            added += 1
+                            time.sleep(delay)
+                    progress.advance(task)
+        except KeyboardInterrupt:
+            console.print("[yellow]Přerušeno, další `import` naváže tam, kde skončil.[/yellow]")
+
+        remaining = db.status_counts(conn)["matched"]
+
+    console.print(
+        f"Lajknuto: [green]{added}[/green], už bylo lajknuté: {skipped}"
+        + (f", chyby: [red]{failed}[/red]" if failed else "")
+        + f". Zbývá importovat: [bold]{remaining}[/bold]."
+    )
 
 
 @app.command()

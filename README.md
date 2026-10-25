@@ -71,6 +71,15 @@ přidej `--authuser 1` (hodnota hlavičky `X-Goog-AuthUser`).
 
 Přihlášení platí, dokud se z YT Music v tom prohlížeči neodhlásíš.
 
+### Výběr kanálu
+
+Pokud máš pod jedním Google přihlášením víc kanálů (brand účty), vyber ten, kde máš YT Music:
+
+```bash
+uv run sp2yt ytm-account              # vypíše kanály, šipka = aktuální
+uv run sp2yt ytm-account @MujKanal    # uloží výběr do .env (YTM_USER)
+```
+
 ### Ověření
 
 ```bash
@@ -78,3 +87,13 @@ uv run sp2yt auth-check
 ```
 
 `.env`, `browser.json` a `.spotify_cache` obsahují přístupové údaje a jsou v `.gitignore`.
+
+## 3. Přenos
+
+```bash
+uv run sp2yt match                 # najde skladby v YT Music (jen čte)
+uv run sp2yt import --dry-run      # ukáže, co se lajkne
+uv run sp2yt import --limit 20     # zkouška na 20 nejstarších
+uv run sp2yt import                # zbytek; lze přerušit a pustit znovu
+uv run sp2yt status
+```
