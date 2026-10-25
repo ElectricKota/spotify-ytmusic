@@ -50,7 +50,9 @@
 3. ✅ **Export ze Spotify**: `export` načte všechny oblíbené (název, umělci, album, délka, ISRC, datum přidání) do DB.
    Spotify Web API od února 2026 vyžaduje Premium u majitele vývojářské aplikace, proto jsou zdroje tři:
    CSV z Exportify (`--file liked.csv`), `YourLibrary.json` z exportu osobních údajů (`--file`), nebo API.
-4. **Párování**: `match` najde `videoId` pro každou skladbu, uloží skóre, vygeneruje `review.csv`.
+4. ✅ **Párování**: `match` najde `videoId` pro každou skladbu a uloží skóre. Pořadí: ISRC → katalog skladeb → videa.
+   Skladby vedoucí na stejné video označí jako `duplicate`. Na 1246 skladbách: 2 min 20 s,
+   1150 jistých shod (1117 přes ISRC), 34 ke kontrole, 7 nenalezeno, 55 duplicit (stejná nahrávka na singlu i albu).
 5. **Kontrola**: `review` zobrazí nejisté shody, ruční opravy z CSV se načtou zpět (`apply-review`).
 6. **Import**: `import --target liked|playlist [--dry-run]` zapíše do YT Music s kontrolou existujících položek.
 7. **Report**: `status` ukáže přehled (přeneseno, nenalezeno, k revizi) a export nenalezených do CSV.

@@ -1,15 +1,18 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import closing
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
 from rich.table import Table
 from spotipy import SpotifyException, SpotifyOauthError
 from ytmusicapi.exceptions import YTMusicError
 
 from sp2yt import clients, db, sources
 from sp2yt.config import Config, load_config
+from sp2yt.matcher import ACCEPT, REVIEW, Matcher
 
 app = typer.Typer(
     help="Přesun oblíbených skladeb ze Spotify do YouTube Music bez duplicit.",
@@ -122,9 +125,73 @@ def export(
 
 
 @app.command()
-def match() -> None:
-    """Najde ke každé skladbě odpovídající skladbu v YouTube Music."""
-    _not_yet(4)
+def match(
+    limit: Annotated[int | None, typer.Option(help="Zpracovat jen prvních N skladeb (na zkoušku).")] = None,
+    retry: Annotated[
+        bool, typer.Option("--retry", help="Znovu hledat i skladby ve stavu not_found a review.")
+    ] = False,
+    workers: Annotated[int, typer.Option(min=1, max=8, help="Počet paralelních vyhledávání.")] = 4,
+) -> None:
+    """Najde ke každé skladbě odpovídající skladbu v YouTube Music. Lze přerušit a navázat."""
+    cfg = load_config()
+    try:
+        clients.ytmusic(cfg)
+    except clients.AuthError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    statuses = ("pending", "not_found", "review") if retry else ("pending",)
+    matcher = Matcher(lambda: clients.ytmusic(cfg))
+    with closing(db.connect(cfg.db_path)) as conn:
+        todo = db.tracks_to_match(conn, statuses, limit)
+        if not todo:
+            console.print("Není co hledat. Nové skladby přidáš přes `export`, nenalezené zkusíš znovu s `--retry`.")
+            return
+
+        found = {"matched": 0, "review": 0, "not_found": 0, "error": 0}
+        progress = Progress(
+            TextColumn("[bold]Hledám"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeRemainingColumn(),
+            TextColumn("[green]✓{task.fields[matched]} [yellow]?{task.fields[review]} [red]✗{task.fields[not_found]}"),
+            console=console,
+        )
+        with progress, ThreadPoolExecutor(max_workers=workers) as pool:
+            task = progress.add_task("match", total=len(todo), matched=0, review=0, not_found=0)
+            futures = {pool.submit(matcher.best_match, t): t for t in todo}
+            try:
+                for i, future in enumerate(as_completed(futures), 1):
+                    track = futures[future]
+                    try:
+                        best = future.result()
+                    except Exception as e:  # síť / YT; skladba zůstane pending a zkusí se příště
+                        found["error"] += 1
+                        db.save_match(conn, track["spotify_id"], "pending", error=str(e)[:500])
+                    else:
+                        status = (
+                            "matched" if best and best.score >= ACCEPT
+                            else "review" if best and best.score >= REVIEW
+                            else "not_found"
+                        )
+                        found[status] += 1
+                        db.save_match(conn, track["spotify_id"], status, best)
+                    if i % 20 == 0:
+                        conn.commit()
+                    progress.update(task, advance=1, **{k: v for k, v in found.items() if k != "error"})
+            except KeyboardInterrupt:
+                pool.shutdown(cancel_futures=True)
+                conn.commit()
+                console.print("[yellow]Přerušeno, hotové výsledky jsou uložené. Další `match` naváže.[/yellow]")
+                raise typer.Exit(130)
+        conn.commit()
+        duplicates = db.mark_duplicates(conn)
+
+    console.print(
+        f"Jistá shoda: [green]{found['matched']}[/green], ke kontrole: [yellow]{found['review']}[/yellow], "
+        f"nenalezeno: [red]{found['not_found']}[/red], duplicitní: {duplicates}"
+        + (f", chyby (zkusí se příště): [red]{found['error']}[/red]" if found["error"] else "")
+    )
 
 
 @app.command()

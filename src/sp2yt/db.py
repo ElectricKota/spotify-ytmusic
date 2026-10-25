@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS tracks (
     match_score   REAL,
     match_title   TEXT,
     match_artists TEXT,
+    match_duration_s INTEGER,
+    match_method  TEXT,                   -- isrc | songs | videos | manual
     error         TEXT,
     updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -42,11 +44,23 @@ CREATE INDEX IF NOT EXISTS idx_tracks_video_id ON tracks(video_id);
 """
 
 
+# Sloupce přidané po vzniku první databáze; CREATE TABLE IF NOT EXISTS je do existující nedoplní
+MIGRATIONS = {
+    "match_duration_s": "INTEGER",
+    "match_method": "TEXT",
+}
+
+
 def connect(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(tracks)")}
+    for column, ddl in MIGRATIONS.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE tracks ADD COLUMN {column} {ddl}")
+    conn.commit()
     return conn
 
 
@@ -87,6 +101,68 @@ def upsert_tracks(conn: sqlite3.Connection, tracks: Iterable[Track]) -> tuple[in
             total += 1
     after = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
     return after - before, total
+
+
+def tracks_to_match(conn: sqlite3.Connection, statuses: tuple[str, ...], limit: int | None) -> list[dict]:
+    """Skladby k vyhledání, od naposledy oblíbené."""
+    rows = conn.execute(
+        f"""
+        SELECT spotify_id, name, artists, duration_ms, isrc FROM tracks
+        WHERE status IN ({", ".join("?" * len(statuses))})
+        ORDER BY source_pos
+        LIMIT ?
+        """,
+        (*statuses, -1 if limit is None else limit),
+    ).fetchall()
+    return [{**dict(r), "artists": json.loads(r["artists"])} for r in rows]
+
+
+def save_match(conn: sqlite3.Connection, spotify_id: str, status: str, candidate=None, error: str | None = None) -> None:
+    c = candidate
+    conn.execute(
+        """
+        UPDATE tracks SET
+            status = ?, video_id = ?, match_score = ?, match_title = ?, match_artists = ?,
+            match_duration_s = ?, match_method = ?, error = ?, updated_at = datetime('now')
+        WHERE spotify_id = ?
+        """,
+        (
+            status,
+            c.video_id if c else None,
+            c.score if c else None,
+            c.title if c else None,
+            json.dumps(c.artists, ensure_ascii=False) if c else None,
+            c.duration_s if c else None,
+            c.method if c else None,
+            error,
+            spotify_id,
+        ),
+    )
+
+
+def mark_duplicates(conn: sqlite3.Connection) -> int:
+    """Když více skladeb ze Spotify vede na stejné video, ponechá jen jednu.
+
+    Přednost má skladba už přidaná do YT Music, jinak ta dřív oblíbená na Spotify.
+    Ostatní dostanou stav 'duplicate' a při importu se přeskočí.
+    """
+    before = conn.total_changes
+    with conn:
+        conn.execute(
+            """
+            WITH ranked AS (
+                SELECT spotify_id, status, ROW_NUMBER() OVER (
+                    PARTITION BY video_id
+                    ORDER BY status = 'added' DESC, status = 'matched' DESC, source_pos DESC
+                ) AS rn
+                FROM tracks
+                WHERE video_id IS NOT NULL AND status IN ('matched', 'review', 'added')
+            )
+            UPDATE tracks SET status = 'duplicate', updated_at = datetime('now')
+            WHERE spotify_id IN (SELECT spotify_id FROM ranked WHERE rn > 1 AND status != 'added')
+            """
+        )
+    return conn.total_changes - before
 
 
 def status_counts(conn: sqlite3.Connection) -> dict[str, int]:
