@@ -36,6 +36,9 @@ def ytm_setup(
 ) -> None:
     """Uloží přihlášení k YouTube Music z hodnoty Cookie (nebo celých hlaviček) zkopírované z prohlížeče."""
     cfg = load_config()
+    if file and not file.exists():
+        console.print(f"[red]Soubor {file.resolve()} neexistuje.[/red]")
+        raise typer.Exit(1)
     raw = file.read_text() if file else clients.read_clipboard()
     try:
         clients.save_ytm_headers(cfg, raw, authuser)
