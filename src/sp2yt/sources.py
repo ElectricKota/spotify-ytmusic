@@ -103,7 +103,8 @@ def from_exportify_csv(path: Path) -> Iterator[Track]:
             yield Track(
                 spotify_id=_id_from_uri(uri),
                 name=name,
-                artists=[a.strip() for a in (get(row, "artists") or "").split(",") if a.strip()],
+                # Exportify odděluje interprety středníkem; čárka bývá součástí jména („Tyler, The Creator“)
+                artists=[a.strip() for a in (get(row, "artists") or "").split(";") if a.strip()],
                 album=get(row, "album"),
                 duration_ms=int(float(duration)) if duration else None,
                 isrc=get(row, "isrc"),
