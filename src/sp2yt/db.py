@@ -157,6 +157,25 @@ def tracks_to_import(conn: sqlite3.Connection, limit: int | None) -> list[dict]:
     ]
 
 
+def tracks_with_status(conn: sqlite3.Connection, status: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT spotify_id, name, artists, video_id, match_title, match_artists FROM tracks WHERE status = ?",
+        (status,),
+    ).fetchall()
+    return [
+        {**dict(r), "artists": json.loads(r["artists"]), "match_artists": json.loads(r["match_artists"] or "[]")}
+        for r in rows
+    ]
+
+
+def reset_to_matched(conn: sqlite3.Connection, spotify_id: str) -> None:
+    with conn:
+        conn.execute(
+            "UPDATE tracks SET status = 'matched', updated_at = datetime('now') WHERE spotify_id = ?",
+            (spotify_id,),
+        )
+
+
 def mark_added(conn: sqlite3.Connection, spotify_id: str) -> None:
     with conn:
         conn.execute(

@@ -433,6 +433,43 @@ def fix_videos(
 
 
 @app.command()
+def verify() -> None:
+    """Ověří, že skladby označené jako přidané jsou v YT Music opravdu lajknuté.
+
+    Při omezování provozu YouTube občas lajk potichu zahodí. Chybějící skladby se vrátí
+    do stavu matched, takže je další `import` lajkne znovu.
+    """
+    cfg = load_config()
+    yt = clients.ytmusic(cfg)
+    with console.status("Načítám Liked music…"):
+        liked = yt.get_liked_songs(limit=None).get("tracks", [])
+    ids = {t["videoId"] for t in liked if t.get("videoId")}
+    keys = {_song_key(t["title"], [a["name"] for a in t.get("artists") or []]) for t in liked}
+
+    with closing(db.connect(cfg.db_path)) as conn:
+        suspicious = [
+            t for t in db.tracks_with_status(conn, "added")
+            if t["video_id"] not in ids
+            and _song_key(t["match_title"], t["match_artists"]) not in keys
+            and _song_key(t["name"], t["artists"]) not in keys
+        ]
+        # Seznam Liked music nemusí obsahovat vše (např. některá videa) → u podezřelých ověřit přímo
+        missing = []
+        for t in suspicious:
+            track = yt.get_watch_playlist(videoId=t["video_id"], limit=1)["tracks"][0]
+            if track.get("likeStatus") != "LIKE":
+                missing.append(t)
+                db.reset_to_matched(conn, t["spotify_id"])
+
+    if not missing:
+        console.print("[green]V pořádku, všechny přidané skladby jsou lajknuté.[/green]")
+        return
+    for t in missing:
+        console.print(f"  [red]✗[/red] {', '.join(t['artists'])} – {t['name']}")
+    console.print(f"[yellow]{len(missing)} skladeb lajknutých není.[/yellow] Spusť `uv run sp2yt import --delay 3`.")
+
+
+@app.command()
 def status() -> None:
     """Přehled stavu přenosu."""
     cfg = load_config()

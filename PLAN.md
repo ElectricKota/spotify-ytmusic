@@ -61,3 +61,11 @@
 
 Každý krok je samostatný příkaz, takže ho po implementaci rovnou otestujeme na tvém účtu
 (nejdřív na pár skladbách přes `--limit 20`).
+
+## Výsledek (2026-10-27)
+
+- 1246 oblíbených ze Spotify → 1150 lajknuto v YT Music (kanál @ElectricKota), 55 duplicit sloučeno,
+  34 nejistých a 7 nenalezených přeskočeno (`match --retry` / ruční kontrola později).
+- Google po ~480 lajcích za půl hodiny blokuje další (403 „Sorry…“); s `--delay 3` druhá dávka prošla bez chyb.
+  Těsně před blokací může lajky potichu zahodit → `verify` je najde a vrátí do fronty.
+- `fix-videos` vyměnil 15 videoklipů v Liked music za audio verze (lepší offline / v autě).
