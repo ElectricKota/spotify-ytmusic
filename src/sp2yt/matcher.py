@@ -26,6 +26,8 @@ VIDEO_PENALTY = 0.05  # videoklip je horší volba než oficiální audio, pokud
 # Části názvu, které nemění skladbu: featuring, „(From <film>)“ a remastery
 _FEAT = re.compile(r"[\(\[]\s*(?:feat|ft|featuring|with|from)\b[^\)\]]*[\)\]]|\s-\s*(?:feat|ft)\b.*$", re.I)
 _REMASTER = re.compile(r"[\(\[]?[^\(\)\[\]\-]*\bre-?master(?:ed)?\b[^\(\)\[\]]*[\)\]]?|\b\d{4}\s+master\b", re.I)
+# „(Original Mix)“ / „(Original)“ jen říká, že nejde o remix
+_ORIGINAL = re.compile(r"[\(\[]\s*original(?:\s+mix)?\s*[\)\]]", re.I)
 # Slova označující jinou verzi skladby; nesoulad mezi Spotify a YT se penalizuje
 _VERSIONS = ("remix", "live", "acoustic", "instrumental", "karaoke", "cover", "sped up", "slowed", "extended", "edit")
 
@@ -49,7 +51,11 @@ def normalize(s: str) -> str:
 
 
 def clean_title(title: str) -> str:
-    return normalize(_REMASTER.sub(" ", _FEAT.sub(" ", title)))
+    # Spotify píše verze za pomlčku („Exceeder - Original Mix“, „Tuyo - From "Narcos"“),
+    # YT Music do závorek → převést na závorky, aby na ně fungovaly stejné úpravy
+    head, *suffixes = re.split(r"\s[-–]\s+", title)
+    title = head + "".join(f" ({s})" for s in suffixes)
+    return normalize(_REMASTER.sub(" ", _ORIGINAL.sub(" ", _FEAT.sub(" ", title))))
 
 
 def _versions(title: str) -> set[str]:

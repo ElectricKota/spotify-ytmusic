@@ -172,10 +172,7 @@ def match(
 ) -> None:
     """Najde ke každé skladbě odpovídající skladbu v YouTube Music. Lze přerušit a navázat."""
     cfg = load_config()
-    try:
-        clients.ytmusic(cfg)
-    except clients.AuthError as e:
-        console.print(f"[red]{e}[/red]")
+    if not _check_ytmusic(cfg):
         raise typer.Exit(1)
 
     statuses = ("pending", "not_found", "review") if retry else ("pending",)
